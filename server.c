@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <winsock2.h>
+#include <string.h> // Needed for string comparison
 
 int main() {
     WSADATA wsaData;
@@ -8,31 +9,27 @@ int main() {
     int c;
     char buffer[2000]; 
 
-    // Initialize Winsock
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         printf("Failed. Error Code : %d", WSAGetLastError());
         return 1;
     }
 
-    // Create Socket
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     
-    // Prepare the sockaddr_in structure
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = INADDR_ANY;
     server.sin_port = htons(8080);
 
-    // Bind
     if (bind(server_socket, (struct sockaddr *)&server, sizeof(server)) == SOCKET_ERROR) {
         printf("Bind failed with error code : %d", WSAGetLastError());
         return 1;
     }
     
-    // Listen
     listen(server_socket, 3);
-    printf("Server is running on http://localhost:8080 ...\n");
+    printf("Server is ready!\n");
+    printf("Try visiting: http://localhost:8080/index\n");
+    printf("Try visiting: http://localhost:8080/about\n");
 
-    // INFINITE LOOP STARTING 
     while(1) {
         printf("\nWaiting for incoming connections...\n");
 
@@ -41,32 +38,50 @@ int main() {
         
         if (client_socket == INVALID_SOCKET) {
             printf("accept failed with error code : %d", WSAGetLastError());
-            continue; // Don't kill the server, just skip this connection
+            continue;
         }
-        
-        printf("Connection accepted!\n");
 
-        // Read the request (we don't do anything with it yet, just clear the buffer)
+        // 1. Read the Request
         recv(client_socket, buffer, 2000, 0);
+        
+        // 2. Manual Routing
+        // We check the first few characters of the buffer.
+        
+        // If the request starts with "GET / " (The Home Page)
+        // Note: we look for "GET / " (with a space)
+        if (strncmp(buffer, "GET / ", 6) == 0 || strncmp(buffer, "GET /index ", 11) == 0) {
+            
+            char response[] = "HTTP/1.1 200 OK\r\n"
+                              "Content-Type: text/html\r\n\r\n"
+                              "<html><body><h1>HOME PAGE</h1>"
+                              "<p>Welcome to the main area.</p></body></html>";
+            send(client_socket, response, strlen(response), 0);
+        
+        } 
+        // If the request starts with "GET /about "
+        else if (strncmp(buffer, "GET /about ", 11) == 0) {
+            
+            char response[] = "HTTP/1.1 200 OK\r\n"
+                              "Content-Type: text/html\r\n\r\n"
+                              "<html><body><h1>ABOUT US</h1>"
+                              "<p>This server was built from scratch in C.</p></body></html>";
+            send(client_socket, response, strlen(response), 0);
+        
+        } 
+        // 404 Not Found for anything else
+        else {
+            
+            char response[] = "HTTP/1.1 404 Not Found\r\n"
+                              "Content-Type: text/html\r\n\r\n"
+                              "<html><body><h1>404</h1>"
+                              "<p>Page not found.</p></body></html>";
+            send(client_socket, response, strlen(response), 0);
+        }
 
-        // Send the Response
-        char http_response[] = "HTTP/1.1 200 OK\r\n"
-                               "Content-Type: text/html\r\n"
-                               "\r\n"
-                               "<html><body>"
-                               "<h1>My C Server is Running Forever!</h1>"
-                               "<p>Refresh this page as many times as you want.</p>"
-                               "</body></html>";
-
-        send(client_socket, http_response, strlen(http_response), 0);
-        printf("Response sent.\n");
-
-        // Close the connection with THIS specific client, but keep the server open
         closesocket(client_socket);
     }
-    // LOOP ENDS 
 
     closesocket(server_socket);
     WSACleanup();
     return 0;
-}
+}pyty
