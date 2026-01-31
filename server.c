@@ -1,6 +1,45 @@
 #include <stdio.h>
 #include <winsock2.h>
-#include <string.h> // Needed for string comparison
+#include <string.h>
+
+// Manual File Loader
+// We can't just "send" a file - we have to read it into memory first.
+void send_file(SOCKET client_socket, const char* filename) {
+    FILE *f = fopen(filename, "rb"); // "rb" = Read Binary (important for images/files)
+    
+    if (f == NULL) {
+        // If file not found, send 404
+        char not_found[] = "HTTP/1.1 404 Not Found\r\n\r\n<h1>404 File Not Found</h1>";
+        send(client_socket, not_found, strlen(not_found), 0);
+        return;
+    }
+
+    // Calculate File Size Manually
+    // We jump to the end (SEEK_END), check the position (ftell), then jump back to start (SEEK_SET).
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    // Manual Memory Management
+    // We assume a max file size of 1MB for this demo (just to keep it simple).
+    char *file_buffer = (char *)malloc(fsize + 1);
+    fread(file_buffer, 1, fsize, f);
+    fclose(f);
+
+    // Prepare the HTTP Header
+    // We must state the Content-Length so the browser knows when the file ends.
+    char header[512];
+    sprintf(header, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %ld\r\n\r\n", fsize);
+
+    // Send Header first
+    send(client_socket, header, strlen(header), 0);
+
+    // Send Body (The File Data)
+    send(client_socket, file_buffer, fsize, 0);
+
+    // Clean up memory
+    free(file_buffer);
+}
 
 int main() {
     WSADATA wsaData;
@@ -26,55 +65,31 @@ int main() {
     }
     
     listen(server_socket, 3);
-    printf("Server is ready!\n");
-    printf("Try visiting: http://localhost:8080/index\n");
-    printf("Try visiting: http://localhost:8080/about\n");
+    printf("Server is ready at http://localhost:8080\n");
 
     while(1) {
-        printf("\nWaiting for incoming connections...\n");
-
         c = sizeof(struct sockaddr_in);
         client_socket = accept(server_socket, (struct sockaddr *)&client, &c);
         
         if (client_socket == INVALID_SOCKET) {
-            printf("accept failed with error code : %d", WSAGetLastError());
             continue;
         }
 
-        // 1. Read the Request
+        // Read Request
         recv(client_socket, buffer, 2000, 0);
         
-        // 2. Manual Routing
-        // We check the first few characters of the buffer.
-        
-        // If the request starts with "GET / " (The Home Page)
-        // Note: we look for "GET / " (with a space)
+        // Routing Logic
         if (strncmp(buffer, "GET / ", 6) == 0 || strncmp(buffer, "GET /index ", 11) == 0) {
-            
-            char response[] = "HTTP/1.1 200 OK\r\n"
-                              "Content-Type: text/html\r\n\r\n"
-                              "<html><body><h1>HOME PAGE</h1>"
-                              "<p>Welcome to the main area.</p></body></html>";
-            send(client_socket, response, strlen(response), 0);
-        
+            // Serve the file
+            send_file(client_socket, "index.html");
         } 
-        // If the request starts with "GET /about "
         else if (strncmp(buffer, "GET /about ", 11) == 0) {
-            
-            char response[] = "HTTP/1.1 200 OK\r\n"
-                              "Content-Type: text/html\r\n\r\n"
-                              "<html><body><h1>ABOUT US</h1>"
-                              "<p>This server was built from scratch in C.</p></body></html>";
+            // Keep the hardcoded About page just to show the difference
+            char response[] = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>About Us</h1><p>Hardcoded response.</p>";
             send(client_socket, response, strlen(response), 0);
-        
         } 
-        // 404 Not Found for anything else
         else {
-            
-            char response[] = "HTTP/1.1 404 Not Found\r\n"
-                              "Content-Type: text/html\r\n\r\n"
-                              "<html><body><h1>404</h1>"
-                              "<p>Page not found.</p></body></html>";
+            char response[] = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<h1>404</h1>";
             send(client_socket, response, strlen(response), 0);
         }
 
@@ -84,4 +99,4 @@ int main() {
     closesocket(server_socket);
     WSACleanup();
     return 0;
-}pyty
+}
