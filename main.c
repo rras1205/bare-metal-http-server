@@ -9,18 +9,24 @@ int main() {
     server_socket = create_server_socket();
     if (server_socket == INVALID_SOCKET) return 1;
 
-    // 1. Initialize the Pool (Use 8-16 threads usually)
+    // Pre-allocate thread pool to avoid CreateThread() overhead per request.
+    // 16 threads chosen to match typical CPU core count for optimal parallelism.
+    // Thread-per-request would be expensive: 40,000 requests = 40,000 thread creations!
     init_thread_pool(16);
 
     printf("High-Performance Server running on Port 8080...\n");
 
+    // Main thread's only job: accept connections and enqueue them.
+    // This keeps accept() fast and non-blocking for new connections.
     while(1) {
-        // 2. Accept
+        // accept() blocks until a client connects, then returns a new socket.
+        // This socket represents the TCP connection to that specific client.
         client_socket = accept(server_socket, (struct sockaddr *)&client, &c);
         
         if (client_socket == INVALID_SOCKET) continue;
 
-        // 3. Enqueue directly (No malloc, no CreateThread overhead)
+        // Hand off to worker thread pool. No malloc, no thread creation.
+        // Worker threads wake up from condition variable, process, and sleep again.
         enqueue_client(client_socket);
     }
 

@@ -3,11 +3,13 @@
 #include <string.h>
 
 // --- HTTP PARSER ---
-// Manually parse HTTP request strings
+// Manual HTTP parsing without libraries to understand the protocol.
+// HTTP format: "METHOD /path HTTP/version\r\nHeader: value\r\n\r\n"
+// We use pointer arithmetic and strchr() for efficiency.
 int parse_http_request(const char *buffer, HttpRequest *req) {
-    // Initialize the structure
+    // Zero out struct to ensure no garbage values
     memset(req, 0, sizeof(HttpRequest));
-    req->content_length = -1;
+    req->content_length = -1;  // -1 means "not specified"
     
     // Parse Request Line: "METHOD /path HTTP/version\r\n"
     const char *line_start = buffer;
@@ -78,18 +80,29 @@ int parse_http_request(const char *buffer, HttpRequest *req) {
 }
 
 // --- CACHE VARS ---
+// Pre-load index.html into memory at startup.
+// Why? Reading from disk per request would be 100x slower.
+// We also pre-build the HTTP headers to avoid sprintf() in hot path.
 char *CACHED_RESPONSE = NULL;
 int CACHED_SIZE = 0;
 
 // --- THREAD POOL VARS ---
+// Circular queue to hold pending client sockets.
+// Why 5000? Large enough to handle burst traffic without dropping connections.
+// Bounded to prevent memory exhaustion under attack/overload.
 #define QUEUE_SIZE 5000     // Can hold 5000 pending connections
 SOCKET client_queue[QUEUE_SIZE];
-int q_front = 0, q_rear = 0, q_count = 0;
+int q_front = 0, q_rear = 0, q_count = 0;  // Circular buffer indices
 
+// Synchronization primitives for thread-safe queue access.
+// CRITICAL_SECTION: Mutex for protecting queue state.
+// CONDITION_VARIABLE: Allows threads to sleep efficiently when queue is empty.
 CRITICAL_SECTION queue_lock;
 CONDITION_VARIABLE queue_cond;
 
-// HELPER: Cache Loader 
+// Pre-load index.html into memory at startup.
+// Why? Reading from disk per request would be 100x slower.
+// We also pre-build the HTTP headers to avoid sprintf() in hot path.
 void load_cache() {
     printf("Loading index.html into memory cache...\n");
     FILE *f = fopen("index.html", "rb");
@@ -118,42 +131,43 @@ void load_cache() {
     printf("Cache Loaded. Size: %d bytes.\n", CACHED_SIZE);
 }
 
-// THE WORKER FUNCTION (Replaces handle_client)
-// Threads loop here forever. They sleep when queue is empty.
+// Worker thread function - each thread runs this loop forever.
+// Pattern: Wait → Grab work → Process → Repeat
+// This is more efficient than creating/destroying threads per request.
 DWORD WINAPI thread_worker(LPVOID lpParam) {
-    char buffer[1024];
+    char buffer[1024];  // Stack-allocated buffer, no malloc needed
 
     while (1) {
         SOCKET client_socket;
 
-        // 1. LOCK and WAIT for work
+        // === PHASE 1: Acquire work from queue ===
         EnterCriticalSection(&queue_lock);
 
+        // If queue is empty, sleep on condition variable.
+        // This is efficient: thread doesn't burn CPU while waiting.
+        // Main thread will wake us with WakeConditionVariable().
         while (q_count == 0) {
-            // Sleep until the main thread wakes us up
             SleepConditionVariableCS(&queue_cond, &queue_lock, INFINITE);
         }
 
-        // 2. GRAB work
+        // Dequeue from circular buffer
         client_socket = client_queue[q_front];
-        q_front = (q_front + 1) % QUEUE_SIZE;
+        q_front = (q_front + 1) % QUEUE_SIZE;  // Wrap around using modulo
         q_count--;
 
         LeaveCriticalSection(&queue_lock);
 
-        // 3. PROCESS - Parse HTTP Request
+        // === PHASE 2: Process request (outside lock for concurrency) ===
         int bytes = recv(client_socket, buffer, 1024, 0);
         if (bytes > 0) {
             buffer[bytes] = '\0';
             
             HttpRequest req;
             if (parse_http_request(buffer, &req) == 0) {
-                // Successfully parsed! Now we can route based on method and path
-                printf("[Request] %s %s %s | Host: %s\n", 
-                       req.method, req.path, req.version, req.host);
-                
-                // Simple routing: serve cached response for GET requests to root
+                // Route based on method and path.
+                // Production servers would have routing tables, regex matching, etc.
                 if (strcmp(req.method, "GET") == 0 && strcmp(req.path, "/") == 0) {
+                    // Send pre-built response (headers + body in one buffer)
                     send(client_socket, CACHED_RESPONSE, CACHED_SIZE, 0);
                 } else {
                     // 404 for other paths
@@ -171,29 +185,38 @@ DWORD WINAPI thread_worker(LPVOID lpParam) {
     return 0;
 }
 
+// Initialize thread pool at startup.
+// All threads are created once and reused for the lifetime of the server.
 void init_thread_pool(int thread_count) {
     InitializeCriticalSection(&queue_lock);
     InitializeConditionVariable(&queue_cond);
 
+    // Create worker threads. They immediately start running thread_worker().
+    // Each thread will sleep on the condition variable until work arrives.
     for (int i = 0; i < thread_count; i++) {
         CreateThread(NULL, 0, thread_worker, NULL, 0, NULL);
     }
     printf("Thread Pool Initialized with %d threads.\n", thread_count);
 }
 
+// Called by main thread to add new client to work queue.
+// This is the producer in a producer-consumer pattern.
 void enqueue_client(SOCKET client_socket) {
     EnterCriticalSection(&queue_lock);
 
-    // If queue is full, we must drop the connection or wait. 
-    // For speed, we drop if full, but 5000 is plenty.
+    // Trade-off: Drop connections vs block accept().
+    // We choose to drop because blocking would prevent new connections.
+    // In practice, 5000 queue slots is plenty for burst traffic.
     if (q_count < QUEUE_SIZE) {
         client_queue[q_rear] = client_socket;
-        q_rear = (q_rear + 1) % QUEUE_SIZE;
+        q_rear = (q_rear + 1) % QUEUE_SIZE;  // Circular buffer wrap
         q_count++;
-        // Wake up ONE sleeping worker
+        // Wake exactly ONE sleeping worker (not all - that would be wasteful)
         WakeConditionVariable(&queue_cond);
     } else {
-        closesocket(client_socket); // Queue full, drop
+        // Queue full - server is overloaded. Drop this connection.
+        // Better than crashing or running out of memory.
+        closesocket(client_socket);
     }
 
     LeaveCriticalSection(&queue_lock);
@@ -209,8 +232,10 @@ SOCKET create_server_socket() {
 
     server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     
-    // OPTIMIZATION: Disable Nagle's Algorithm (TCP_NODELAY)
-    // This makes small responses (like HTTP headers) instant.
+    // TCP_NODELAY disables Nagle's algorithm.
+    // Nagle buffers small packets to reduce network overhead.
+    // For HTTP, we want immediate sends even if small (lower latency).
+    // Trade-off: Lower latency vs slightly more network packets.
     int flag = 1;
     setsockopt(server_socket, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
 
