@@ -10,26 +10,25 @@ NUM_PROCESSES = 8       # Number of Python processes (Simulated Users)
 REQUESTS_PER_PROCESS = 5000 # Total requests = 8 * 5000 = 40,000
 
 def attack(pid):
-    # Create a raw socket (Much faster than the 'requests' library)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect((TARGET_IP, TARGET_PORT))
-    except ConnectionRefusedError:
-        print(f"Process {pid}: Connection Refused! Is server running?")
-        return
-
     request = b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
     start = time.time()
+    successful_requests = 0
     
     for _ in range(REQUESTS_PER_PROCESS):
-        sock.sendall(request)
-        # We assume the server sends a response, we read a chunk to clear the buffer
-        # This keeps the pipe flowing.
-        sock.recv(4096)
+        try:
+            # Create new connection for each request (server closes after response)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((TARGET_IP, TARGET_PORT))
+            sock.sendall(request)
+            sock.recv(4096)
+            sock.close()
+            successful_requests += 1
+        except (ConnectionRefusedError, ConnectionAbortedError, OSError) as e:
+            # Connection failed, continue to next request
+            continue
 
     duration = time.time() - start
-    sock.close()
-    return (REQUESTS_PER_PROCESS, duration)
+    return (successful_requests, duration)
 
 if __name__ == "__main__":
     server_name = "C Server" if TARGET_PORT == 8080 else f"Server on port {TARGET_PORT}"
