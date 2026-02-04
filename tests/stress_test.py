@@ -1,10 +1,11 @@
 import socket
 import time
 import multiprocessing
+import sys
 
 # CONFIGURATION
 TARGET_IP = "127.0.0.1"
-TARGET_PORT = 8080
+TARGET_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 NUM_PROCESSES = 8       # Number of Python processes (Simulated Users)
 REQUESTS_PER_PROCESS = 5000 # Total requests = 8 * 5000 = 40,000
 
@@ -31,8 +32,10 @@ def attack(pid):
     return (REQUESTS_PER_PROCESS, duration)
 
 if __name__ == "__main__":
-    print(f"--- STARTING ATTACK ON {TARGET_IP}:{TARGET_PORT} ---")
+    server_name = "C Server" if TARGET_PORT == 8080 else f"Server on port {TARGET_PORT}"
+    print(f"--- CONCURRENT LOAD TEST: {server_name} ({TARGET_IP}:{TARGET_PORT}) ---")
     print(f"Spawning {NUM_PROCESSES} processes sending {REQUESTS_PER_PROCESS} requests each...")
+    print(f"Total requests: {NUM_PROCESSES * REQUESTS_PER_PROCESS}")
     
     start_time = time.time()
     
