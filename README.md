@@ -87,15 +87,21 @@ High-Performance Server running on Port 8080...
 
 Visit `http://localhost:8080/` to see the served page:
 
-![Server Output](https://via.placeholder.com/800x400/222/0f0?text=MISSION+ACCOMPLISHED)
+![Server Output](docs/browser-output.png)
 
 *Terminal-style page with green text on black background - "No Frameworks. No Magic. Just C."*
 
-> **Note**: Replace the placeholder image above with an actual screenshot by:
-> 1. Start the server: `.\server.exe`
-> 2. Open `http://localhost:8080/` in browser
-> 3. Take screenshot and save as `docs/demo.png`
-> 4. Update image link: `![Server Output](docs/demo.png)`
+### Performance Comparison
+
+**C Server (5,059 req/s):**
+
+![C Server Test Results](docs/test-results.png)
+
+**Python Server (3,250 req/s):**
+
+![Python Server Test Results](docs/test-results-python.png)
+
+**Result: C server is 56% faster with 35% lower latency**
 
 ---
 
