@@ -87,7 +87,7 @@ High-Performance Server running on Port 8080...
 
 Visit `http://localhost:8080/` to see the served page:
 
-![Server Output](docs/browser-output.png)
+![Server Output](docs/browser-output1.png)
 
 *Terminal-style page with green text on black background - "No Frameworks. No Magic. Just C."*
 
