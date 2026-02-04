@@ -15,9 +15,8 @@ Build a functional HTTP server that is able to
 
 ## Current Status
 - [x] Project Setup
-- [ ] Socket Initialization 
-- [ ] The Loop & Connections 
-- [ ] Parsing HTTP 
-- [ ] Benchmarking Test
+- [x] Socket Initialization 
+- [x] The Loop & Connections 
+- [x] Parsing HTTP 
+- [x] Benchmarking Test
 
-test

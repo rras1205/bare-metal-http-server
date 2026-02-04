@@ -1,52 +1,49 @@
-import threading
+import socket
 import time
-import urllib.request
+import multiprocessing
 
 # CONFIGURATION
-CONCURRENT_USERS = 50       # How many people hit the server at EXACTLY the same time
-REQUESTS_PER_USER = 20      # How many times each person refreshes the page
-TOTAL_REQUESTS = CONCURRENT_USERS * REQUESTS_PER_USER
+TARGET_IP = "127.0.0.1"
+TARGET_PORT = 8080
+NUM_PROCESSES = 8       # Number of Python processes (Simulated Users)
+REQUESTS_PER_PROCESS = 5000 # Total requests = 8 * 5000 = 40,000
 
-def get_url(url):
+def attack(pid):
+    # Create a raw socket (Much faster than the 'requests' library)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        # Send a request and read the response (simulating a full download)
-        with urllib.request.urlopen(url) as response:
-            response.read()
-    except Exception as e:
-        print(f"Request failed: {e}")
+        sock.connect((TARGET_IP, TARGET_PORT))
+    except ConnectionRefusedError:
+        print(f"Process {pid}: Connection Refused! Is server running?")
+        return
 
-def run_benchmark(port, name):
-    url = f"http://localhost:{port}/"
-    print(f"--- Testing {name} on Port {port} ---")
-    print(f"Simulating {CONCURRENT_USERS} users making {REQUESTS_PER_USER} requests each...")
+    request = b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    start = time.time()
     
-    threads = []
-    start_time = time.time()
+    for _ in range(REQUESTS_PER_PROCESS):
+        sock.sendall(request)
+        # We assume the server sends a response, we read a chunk to clear the buffer
+        # This keeps the pipe flowing.
+        sock.recv(4096)
 
-    # Spawn the "Users"
-    for _ in range(CONCURRENT_USERS):
-        # Create a thread that runs the loop
-        t = threading.Thread(target=lambda: [get_url(url) for _ in range(REQUESTS_PER_USER)])
-        threads.append(t)
-        t.start()
-
-    # Wait for everyone to finish
-    for t in threads:
-        t.join()
-
-    end_time = time.time()
-    duration = end_time - start_time
-    rps = TOTAL_REQUESTS / duration
-
-    print(f"Total Time: {duration:.2f} seconds")
-    print(f"Throughput: {rps:.2f} Requests/Sec")
-    print("-" * 30)
+    duration = time.time() - start
+    sock.close()
+    return (REQUESTS_PER_PROCESS, duration)
 
 if __name__ == "__main__":
-    # Test Python (Make sure it's running!)
-    run_benchmark(9000, "Python Built-in")
+    print(f"--- STARTING ATTACK ON {TARGET_IP}:{TARGET_PORT} ---")
+    print(f"Spawning {NUM_PROCESSES} processes sending {REQUESTS_PER_PROCESS} requests each...")
     
-    print("\n")
+    start_time = time.time()
     
-    # Test C (Make sure it's running!)
-    run_benchmark(8080, "My C Server")
+    # Use Multiprocessing to utilize all CPU cores
+    with multiprocessing.Pool(processes=NUM_PROCESSES) as pool:
+        results = pool.map(attack, range(NUM_PROCESSES))
+
+    total_time = time.time() - start_time
+    total_requests = NUM_PROCESSES * REQUESTS_PER_PROCESS
+    
+    print(f"\n--- RESULTS ---")
+    print(f"Total Requests: {total_requests}")
+    print(f"Total Time:     {total_time:.4f} seconds")
+    print(f"Throughput:     {total_requests / total_time:.2f} Requests/Second")

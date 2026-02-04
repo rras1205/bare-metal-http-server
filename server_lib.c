@@ -1,86 +1,225 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include "server.h"
+#include <process.h> // For _beginthreadex if needed, but CreateThread is fine here
 #include <string.h>
-#include "server.h" // We link to our own header
 
-// LOGIC 1: Setup the Server
+// --- HTTP PARSER ---
+// Manually parse HTTP request strings
+int parse_http_request(const char *buffer, HttpRequest *req) {
+    // Initialize the structure
+    memset(req, 0, sizeof(HttpRequest));
+    req->content_length = -1;
+    
+    // Parse Request Line: "METHOD /path HTTP/version\r\n"
+    const char *line_start = buffer;
+    const char *space1 = strchr(line_start, ' ');
+    if (!space1) return -1;
+    
+    // Extract METHOD
+    int method_len = space1 - line_start;
+    if (method_len >= sizeof(req->method)) method_len = sizeof(req->method) - 1;
+    strncpy(req->method, line_start, method_len);
+    req->method[method_len] = '\0';
+    
+    // Extract PATH
+    const char *space2 = strchr(space1 + 1, ' ');
+    if (!space2) return -1;
+    int path_len = space2 - (space1 + 1);
+    if (path_len >= sizeof(req->path)) path_len = sizeof(req->path) - 1;
+    strncpy(req->path, space1 + 1, path_len);
+    req->path[path_len] = '\0';
+    
+    // Extract VERSION
+    const char *line_end = strstr(space2, "\r\n");
+    if (!line_end) return -1;
+    int version_len = line_end - (space2 + 1);
+    if (version_len >= sizeof(req->version)) version_len = sizeof(req->version) - 1;
+    strncpy(req->version, space2 + 1, version_len);
+    req->version[version_len] = '\0';
+    
+    // Parse Headers
+    const char *header_start = line_end + 2;
+    while (1) {
+        // Check for end of headers (empty line)
+        if (header_start[0] == '\r' && header_start[1] == '\n') break;
+        
+        const char *colon = strchr(header_start, ':');
+        if (!colon) break;
+        
+        const char *header_end = strstr(header_start, "\r\n");
+        if (!header_end) break;
+        
+        // Calculate header name length
+        int name_len = colon - header_start;
+        
+        // Skip whitespace after colon
+        const char *value_start = colon + 1;
+        while (*value_start == ' ') value_start++;
+        
+        int value_len = header_end - value_start;
+        
+        // Parse specific headers we care about
+        if (name_len == 4 && strncmp(header_start, "Host", 4) == 0) {
+            if (value_len >= sizeof(req->host)) value_len = sizeof(req->host) - 1;
+            strncpy(req->host, value_start, value_len);
+            req->host[value_len] = '\0';
+        }
+        else if (name_len == 14 && strncmp(header_start, "Content-Length", 14) == 0) {
+            char len_buf[32];
+            if (value_len >= sizeof(len_buf)) value_len = sizeof(len_buf) - 1;
+            strncpy(len_buf, value_start, value_len);
+            len_buf[value_len] = '\0';
+            req->content_length = atoi(len_buf);
+        }
+        
+        header_start = header_end + 2;
+    }
+    
+    return 0;
+}
+
+// --- CACHE VARS ---
+char *CACHED_RESPONSE = NULL;
+int CACHED_SIZE = 0;
+
+// --- THREAD POOL VARS ---
+#define QUEUE_SIZE 5000     // Can hold 5000 pending connections
+SOCKET client_queue[QUEUE_SIZE];
+int q_front = 0, q_rear = 0, q_count = 0;
+
+CRITICAL_SECTION queue_lock;
+CONDITION_VARIABLE queue_cond;
+
+// HELPER: Cache Loader 
+void load_cache() {
+    printf("Loading index.html into memory cache...\n");
+    FILE *f = fopen("index.html", "rb");
+    if (!f) {
+        // Fallback if file missing
+        char *fallback = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello World";
+        CACHED_SIZE = strlen(fallback);
+        CACHED_RESPONSE = (char *)malloc(CACHED_SIZE + 1);
+        strcpy(CACHED_RESPONSE, fallback);
+        return;
+    }
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *file_buffer = (char *)malloc(fsize);
+    fread(file_buffer, 1, fsize, f);
+    fclose(f);
+    
+    char header[512];
+    sprintf(header, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %ld\r\n\r\n", fsize);
+    CACHED_SIZE = strlen(header) + fsize;
+    CACHED_RESPONSE = (char *)malloc(CACHED_SIZE);
+    memcpy(CACHED_RESPONSE, header, strlen(header));
+    memcpy(CACHED_RESPONSE + strlen(header), file_buffer, fsize);
+    free(file_buffer);
+    printf("Cache Loaded. Size: %d bytes.\n", CACHED_SIZE);
+}
+
+// THE WORKER FUNCTION (Replaces handle_client)
+// Threads loop here forever. They sleep when queue is empty.
+DWORD WINAPI thread_worker(LPVOID lpParam) {
+    char buffer[1024];
+
+    while (1) {
+        SOCKET client_socket;
+
+        // 1. LOCK and WAIT for work
+        EnterCriticalSection(&queue_lock);
+
+        while (q_count == 0) {
+            // Sleep until the main thread wakes us up
+            SleepConditionVariableCS(&queue_cond, &queue_lock, INFINITE);
+        }
+
+        // 2. GRAB work
+        client_socket = client_queue[q_front];
+        q_front = (q_front + 1) % QUEUE_SIZE;
+        q_count--;
+
+        LeaveCriticalSection(&queue_lock);
+
+        // 3. PROCESS - Parse HTTP Request
+        int bytes = recv(client_socket, buffer, 1024, 0);
+        if (bytes > 0) {
+            buffer[bytes] = '\0';
+            
+            HttpRequest req;
+            if (parse_http_request(buffer, &req) == 0) {
+                // Successfully parsed! Now we can route based on method and path
+                printf("[Request] %s %s %s | Host: %s\n", 
+                       req.method, req.path, req.version, req.host);
+                
+                // Simple routing: serve cached response for GET requests to root
+                if (strcmp(req.method, "GET") == 0 && strcmp(req.path, "/") == 0) {
+                    send(client_socket, CACHED_RESPONSE, CACHED_SIZE, 0);
+                } else {
+                    // 404 for other paths
+                    char *not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found";
+                    send(client_socket, not_found, strlen(not_found), 0);
+                }
+            } else {
+                // Failed to parse, send 400 Bad Request
+                char *bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request";
+                send(client_socket, bad_request, strlen(bad_request), 0);
+            }
+        }
+        closesocket(client_socket);
+    }
+    return 0;
+}
+
+void init_thread_pool(int thread_count) {
+    InitializeCriticalSection(&queue_lock);
+    InitializeConditionVariable(&queue_cond);
+
+    for (int i = 0; i < thread_count; i++) {
+        CreateThread(NULL, 0, thread_worker, NULL, 0, NULL);
+    }
+    printf("Thread Pool Initialized with %d threads.\n", thread_count);
+}
+
+void enqueue_client(SOCKET client_socket) {
+    EnterCriticalSection(&queue_lock);
+
+    // If queue is full, we must drop the connection or wait. 
+    // For speed, we drop if full, but 5000 is plenty.
+    if (q_count < QUEUE_SIZE) {
+        client_queue[q_rear] = client_socket;
+        q_rear = (q_rear + 1) % QUEUE_SIZE;
+        q_count++;
+        // Wake up ONE sleeping worker
+        WakeConditionVariable(&queue_cond);
+    } else {
+        closesocket(client_socket); // Queue full, drop
+    }
+
+    LeaveCriticalSection(&queue_lock);
+}
+
 SOCKET create_server_socket() {
     WSADATA wsaData;
     SOCKET server_socket;
     struct sockaddr_in server;
 
-    // Initialize Winsock
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        printf("Winsock initialization failed.\n");
-        return INVALID_SOCKET;
-    }
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+    load_cache(); 
 
-    // Create Socket
-    server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_socket == INVALID_SOCKET) {
-        printf("Socket creation failed.\n");
-        return INVALID_SOCKET;
-    }
+    server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    
+    // OPTIMIZATION: Disable Nagle's Algorithm (TCP_NODELAY)
+    // This makes small responses (like HTTP headers) instant.
+    int flag = 1;
+    setsockopt(server_socket, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
 
-    // Prepare Address
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = INADDR_ANY;
     server.sin_port = htons(8080);
 
-    // Bind
-    if (bind(server_socket, (struct sockaddr *)&server, sizeof(server)) == SOCKET_ERROR) {
-        printf("Bind failed.\n");
-        return INVALID_SOCKET;
-    }
+    bind(server_socket, (struct sockaddr *)&server, sizeof(server));
+    listen(server_socket, SOMAXCONN);
     
-    // Listen
-    listen(server_socket, 10);
     return server_socket;
-}
-
-// LOGIC 2: Handle the Client
-DWORD WINAPI handle_client(LPVOID client_socket_ptr) {
-    SOCKET client_socket = *(SOCKET*)client_socket_ptr;
-    free(client_socket_ptr); // Free the pointer memory allocated in main
-
-    char buffer[2000];
-    recv(client_socket, buffer, 2000, 0);
-
-    // Manual Routing Logic
-    if (strncmp(buffer, "GET / ", 6) == 0 || strncmp(buffer, "GET /index ", 11) == 0) {
-        FILE *f = fopen("index.html", "rb");
-        if (f) {
-            fseek(f, 0, SEEK_END);
-            long fsize = ftell(f);
-            fseek(f, 0, SEEK_SET);
-
-            char *file_buffer = (char *)malloc(fsize + 1);
-            fread(file_buffer, 1, fsize, f);
-            fclose(f);
-
-            char header[512];
-            sprintf(header, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %ld\r\n\r\n", fsize);
-            
-            send(client_socket, header, strlen(header), 0);
-            send(client_socket, file_buffer, fsize, 0);
-            free(file_buffer);
-        } else {
-            char response[] = "HTTP/1.1 404 Not Found\r\n\r\n<h1>404 Missing index.html</h1>";
-            send(client_socket, response, strlen(response), 0);
-        }
-    } 
-    else if (strncmp(buffer, "GET /about ", 11) == 0 || strncmp(buffer, "GET /about/ ", 12) == 0) {
-        char response[] = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>About Us</h1><p>This is a C server.</p>";
-        send(client_socket, response, strlen(response), 0);
-    }
-    else {
-        char response[] = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<h1>404 Page Not Found</h1>";
-        send(client_socket, response, strlen(response), 0);
-    }
-
-    // Print the thread ID so we know it's working concurrently
-    printf("Request handled by Thread ID: %lu\n", GetCurrentThreadId());
-
-    closesocket(client_socket);
-    return 0;
 }

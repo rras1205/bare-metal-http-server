@@ -2,16 +2,28 @@
 #define SERVER_H
 
 #include <winsock2.h>
-#include <windows.h> // Needed for thread functions
+#include <windows.h>
+#include <stdio.h>
 
-// FUNCTION PROTOTYPES
-// This acts as a "contract". Any file that includes this header
-// knows these functions exist, even if it doesn't know how they work.
+// HTTP Request Structure
+typedef struct {
+    char method[16];        // GET, POST, etc.
+    char path[256];         // /index.html, /api/data, etc.
+    char version[16];       // HTTP/1.1
+    char host[128];         // Host header value
+    int content_length;     // Content-Length header value
+} HttpRequest;
 
-// Function to initialize Winsock, create socket, bind, and listen
+// Parse raw HTTP request string
+int parse_http_request(const char *buffer, HttpRequest *req);
+
+// Initialize the server socket
 SOCKET create_server_socket();
 
-// Function to handle individual client interactions (threaded)
-DWORD WINAPI handle_client(LPVOID client_socket_ptr);
+// Start the worker threads
+void init_thread_pool(int thread_count);
+
+// Add a client to the work queue (Main thread calls this)
+void enqueue_client(SOCKET client_socket);
 
 #endif
