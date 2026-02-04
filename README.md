@@ -1,5 +1,11 @@
 # Bare-Metal HTTP Server in C
 
+![Language](https://img.shields.io/badge/language-C-blue.svg)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Threads](https://img.shields.io/badge/threads-16-orange.svg)
+![Performance](https://img.shields.io/badge/performance-1118_req%2Fs-brightgreen.svg)
+
 A high-performance, multi-threaded HTTP server built from scratch in C to understand low-level network programming, TCP/IP internals, and systems optimization.
 
 **Built without frameworks** - Manual socket handling, HTTP parsing, and thread management to demonstrate systems programming knowledge.
@@ -15,6 +21,81 @@ Most web developers rely on frameworks like Express or Flask without understandi
 - **Master HTTP protocol** - Manual parsing of request lines and headers
 - **Optimize performance** - Memory management, caching, and profiling
 - **Benchmark rigorously** - Understanding test methodology and bottleneck analysis
+
+---
+
+## Skills Demonstrated
+
+This project showcases practical experience with:
+
+**Languages & Tools:**
+- C programming (manual memory management, pointers, structs)
+- Windows API (Winsock2, threading primitives)
+- Git version control (conventional commits, clean history)
+- GCC compiler toolchain
+
+**Systems Programming:**
+- TCP/IP networking (socket(), bind(), listen(), accept())
+- Multi-threading (thread pools, worker threads)
+- Synchronization primitives (CRITICAL_SECTION, CONDITION_VARIABLE)
+- Producer-consumer pattern (circular queue)
+- Memory management (malloc/free, buffer management, pre-allocation)
+
+**Protocols & Standards:**
+- HTTP/1.1 protocol (request/response format)
+- Manual protocol parsing (no libraries)
+- Status codes (200 OK, 404 Not Found, 400 Bad Request)
+- Header parsing (Host, Content-Length)
+
+**Performance Engineering:**
+- Profiling and bottleneck identification (found 50% slowdown from logging)
+- Caching strategies (in-memory response caching)
+- TCP optimization (TCP_NODELAY for lower latency)
+- Benchmark design and analysis
+
+**Testing & Quality:**
+- Load testing (40,000 concurrent requests)
+- Performance benchmarking (sequential and concurrent)
+- Automated test suites
+- Comparison testing (C vs Python vs Node.js)
+
+**Soft Skills:**
+- Problem-solving (debugged connection errors, performance issues)
+- Critical thinking (questioned benchmark results, investigated methodology)
+- Technical writing (comprehensive documentation)
+- Engineering maturity (honest analysis vs false claims)
+
+---
+
+## Demo
+
+### Server in Action
+
+```
+Loading index.html into memory cache...
+Cache Loaded. Size: 653 bytes.
+Thread Pool Initialized with 16 threads.
+High-Performance Server running on Port 8080...
+```
+
+**Performance Results:**
+- **Sequential Test**: 1,118 requests/second
+- **Concurrent Load**: Handles 40,000 requests across 8 processes
+- **Latency**: ~0.89ms average per request
+
+### Browser Output
+
+Visit `http://localhost:8080/` to see the served page:
+
+![Server Output](https://via.placeholder.com/800x400/222/0f0?text=MISSION+ACCOMPLISHED)
+
+*Terminal-style page with green text on black background - "No Frameworks. No Magic. Just C."*
+
+> **Note**: Replace the placeholder image above with an actual screenshot by:
+> 1. Start the server: `.\server.exe`
+> 2. Open `http://localhost:8080/` in browser
+> 3. Take screenshot and save as `docs/demo.png`
+> 4. Update image link: `![Server Output](docs/demo.png)`
 
 ---
 
@@ -220,13 +301,40 @@ python tests\quick_test.py 4000  # Test it
 
 ## Future Improvements
 
-- [ ] HTTP/1.1 keep-alive (connection reuse)
-- [ ] HTTPS/TLS support
-- [ ] Request body parsing (POST data)
-- [ ] Static file routing (serve multiple files)
-- [ ] Logging system (without performance impact)
-- [ ] Linux/POSIX port (currently Windows-only)
-- [ ] Load balancing across multiple processes
+**Planned Enhancements:**
+
+- [ ] **HTTP/1.1 keep-alive** - Connection reuse to reduce TCP overhead
+- [ ] **HTTPS/TLS support** - Secure connections with OpenSSL
+- [ ] **Request body parsing** - Handle POST data and form submissions
+- [ ] **Static file routing** - Serve multiple files from directory
+- [ ] **Logging system** - Structured logging without performance impact
+- [ ] **Linux/POSIX port** - Cross-platform support (currently Windows-only)
+- [ ] **Load balancing** - Multiple server processes with shared queue
+- [ ] **Configuration file** - Runtime configuration (port, threads, cache size)
+- [ ] **Compression** - gzip/deflate response compression
+- [ ] **Rate limiting** - Prevent abuse and DoS attacks
+
+---
+
+## Contributing
+
+This is a learning project, but feedback and suggestions are welcome!
+
+**Areas for contribution:**
+- Performance optimizations
+- Cross-platform compatibility (Linux/macOS)
+- Additional HTTP features
+- Test coverage improvements
+- Documentation enhancements
+
+**How to contribute:**
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+Feel free to open an issue for bugs, questions, or feature requests!
 
 ---
 
